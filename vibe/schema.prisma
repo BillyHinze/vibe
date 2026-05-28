@@ -1,0 +1,262 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  username      String   @unique
+  displayName   String
+  passwordHash  String
+  email         String?  @unique
+  avatarUrl     String?
+  bio           String?  @default("")
+  status        String   @default("online") // online, away, dnd, invisible
+  level         Int      @default(1)
+  xp            Int      @default(0)
+  credits       Int      @default(100)
+  streak        Int      @default(0)
+  lastLogin     DateTime @default(now())
+  createdAt     DateTime @default(now())
+  refreshToken  String?
+
+  // equipped shop items
+  equippedTag     String?
+  equippedBanner  String?
+  equippedAvatarFx String?
+  equippedTitle   String?
+
+  // relations
+  ownedServers     Server[]       @relation("ServerOwner")
+  serverMemberships ServerMember[]
+  sentMessages     Message[]      @relation("MessageAuthor")
+  sentDMs          DirectMessage[] @relation("DMSender")
+  receivedDMs      DirectMessage[] @relation("DMReceiver")
+  notifications    Notification[]
+  friendRequestsSent     Friendship[] @relation("FriendRequester")
+  friendRequestsReceived Friendship[] @relation("FriendAddressee")
+  reactions        Reaction[]
+  pollVotes        PollVote[]
+  purchasedItems   UserItem[]
+  auditLogs        AuditLog[]     @relation("AuditActor")
+  bans             ServerBan[]
+}
+
+model Server {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @default("")
+  iconUrl     String?
+  ownerId     String
+  inviteCode  String   @unique
+  isPublic    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  owner    User           @relation("ServerOwner", fields: [ownerId], references: [id])
+  members  ServerMember[]
+  channels Channel[]
+  auditLogs AuditLog[]
+  bans     ServerBan[]
+}
+
+model ServerMember {
+  id           String   @id @default(cuid())
+  userId       String
+  serverId     String
+  role         String   @default("member") // owner, admin, moderator, member
+  joinedAt     DateTime @default(now())
+  messageCount Int      @default(0)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, serverId])
+}
+
+model Channel {
+  id           String   @id @default(cuid())
+  serverId     String
+  name         String
+  description  String?  @default("")
+  type         String   @default("text") // text, voice
+  categoryName String   @default("General")
+  slowMode     Int      @default(0)
+  isNsfw       Boolean  @default(false)
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  server   Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  messages Message[]
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  channelId String
+  authorId  String
+  content   String
+  type      String   @default("text") // text, system, announcement, poll
+  editedAt  DateTime?
+  isPinned  Boolean  @default(false)
+  replyToId String?
+  createdAt DateTime @default(now())
+
+  channel     Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  author      User        @relation("MessageAuthor", fields: [authorId], references: [id])
+  replyTo     Message?    @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies     Message[]   @relation("MessageReplies")
+  reactions   Reaction[]
+  attachments Attachment[]
+  poll        Poll?
+}
+
+model Reaction {
+  id        String @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+}
+
+model Attachment {
+  id        String @id @default(cuid())
+  messageId String
+  url       String
+  filename  String
+  size      Int
+  mimeType  String
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+}
+
+model Poll {
+  id          String   @id @default(cuid())
+  messageId   String   @unique
+  question    String
+  allowMultiple Boolean @default(false)
+  endsAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  message Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  options PollOption[]
+  votes   PollVote[]
+}
+
+model PollOption {
+  id        String @id @default(cuid())
+  pollId    String
+  text      String
+  voteCount Int    @default(0)
+
+  poll  Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes PollVote[]
+}
+
+model PollVote {
+  id       String @id @default(cuid())
+  pollId   String
+  optionId String
+  userId   String
+
+  poll   Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+}
+
+model Friendship {
+  id          String   @id @default(cuid())
+  requesterId String
+  addresseeId String
+  status      String   @default("pending") // pending, accepted, declined
+  createdAt   DateTime @default(now())
+
+  requester User @relation("FriendRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("FriendAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+}
+
+model DirectMessage {
+  id         String   @id @default(cuid())
+  senderId   String
+  receiverId String
+  content    String
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  sender   User @relation("DMSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("DMReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  content   String
+  read      Boolean  @default(false)
+  relatedId String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ShopItem {
+  id          String @id @default(cuid())
+  name        String
+  type        String // tag, banner, avatarFx, title
+  description String
+  price       Int
+  assetData   String // CSS class, emoji string, image URL, etc.
+  rarity      String @default("common") // common, rare, epic, legendary
+
+  purchasedBy UserItem[]
+}
+
+model UserItem {
+  id          String   @id @default(cuid())
+  userId      String
+  itemId      String
+  purchasedAt DateTime @default(now())
+  isEquipped  Boolean  @default(false)
+
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item ShopItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  serverId  String
+  actorId   String
+  action    String
+  targetId  String?
+  details   String?
+  createdAt DateTime @default(now())
+
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  actor  User   @relation("AuditActor", fields: [actorId], references: [id])
+}
+
+model ServerBan {
+  id       String   @id @default(cuid())
+  serverId String
+  userId   String
+  reason   String?
+  bannedAt DateTime @default(now())
+
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([serverId, userId])
+}
